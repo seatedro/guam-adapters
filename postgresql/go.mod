@@ -6,6 +6,7 @@ require (
 	github.com/georgysavva/scany/v2 v2.0.0
 	github.com/jackc/pgx/v5 v5.5.1
 	github.com/joho/godotenv v1.5.1
+	github.com/rohitp934/guam v0.0.3
 	go.uber.org/zap v1.26.0
 )
 

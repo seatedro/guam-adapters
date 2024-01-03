@@ -1,6 +1,9 @@
 package postgresql
 
-import "strings"
+import (
+	"reflect"
+	"strings"
+)
 
 const EscapeChar = `"`
 
@@ -10,4 +13,30 @@ func EscapeName(val string) string {
 		return val
 	}
 	return EscapeChar + val + EscapeChar
+}
+
+type (
+	PlaceHolderFunc   func(index int) string
+	HelperFunc[T any] func(values T) ([]string, []string, []interface{})
+)
+
+func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFunc[T] {
+	return func(values T) ([]string, []string, []interface{}) {
+		v := reflect.ValueOf(values)
+		t := v.Type()
+
+		var fields []string
+		var placeholders []string
+		var args []interface{}
+
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			tag := field.Tag.Get("db")
+			fields = append(fields, EscapeName(tag))
+			placeholders = append(placeholders, placeholder(i))
+			args = append(args, v.Field(i).Interface())
+		}
+
+		return fields, placeholders, args
+	}
 }

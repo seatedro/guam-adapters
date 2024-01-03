@@ -6,36 +6,66 @@ package postgresql
 import (
 	"context"
 	"log"
+	"math/rand"
 	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
+	"github.com/rohitp934/guam/auth"
+	"github.com/rohitp934/guam/utils"
 )
 
 type User struct {
-	ID       string
-	Username string
+	ID       string `db:"id"`
+	Username string `db:"username"`
 }
 
-func insert(ctx context.Context, conn *pgx.Conn) {
+func insert(ctx context.Context, conn *pgx.Conn) string {
 	// Create a new user.
-	_, err := conn.Exec(context.Background(), "INSERT INTO auth_user (id, username) VALUES ($1, $2)", "1", "test@example.com")
+	userId := utils.GenerateRandomString(5, "")
+	username := utils.GenerateRandomString(6, "")
+	_, err := conn.Exec(
+		context.Background(),
+		"INSERT INTO auth_user (id, username) VALUES ($1, $2)",
+		userId,
+		username,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Create a new session.
-	_, err = conn.Exec(context.Background(), "INSERT INTO user_session (id, user_id, active_expires, idle_expires) VALUES ($1, $2, $3, $4)", "1", "1", 1702786038216, 1702786038216)
+	sessionId := utils.GenerateRandomString(5, "")
+	active_expires := rand.Int63n(1000000000000)
+	idle_expires := rand.Int63n(1000000000000)
+	_, err = conn.Exec(
+		context.Background(),
+		"INSERT INTO user_session (id, user_id, active_expires, idle_expires) VALUES ($1, $2, $3, $4)",
+		sessionId,
+		userId,
+		active_expires,
+		idle_expires,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Create a new key.
-	_, err = conn.Exec(context.Background(), "INSERT INTO user_key (id, user_id, hashed_password) VALUES ($1, $2, $3)", "1", "1", "s2:xflkjaasdfasdflkj")
+	keyId := utils.GenerateRandomString(5, "")
+	hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
+	_, err = conn.Exec(
+		context.Background(),
+		"INSERT INTO user_key (id, user_id, hashed_password) VALUES ($1, $2, $3)",
+		keyId,
+		userId,
+		hashedPassword,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	return userId
 }
 
 func getAdapter[S any, T any](ctx context.Context, conn *pgx.Conn) TestAdapter[T] {
@@ -65,7 +95,7 @@ func delete(ctx context.Context, conn *pgx.Conn) {
 	}
 }
 
-func TestGetUser(t *testing.T) {
+func setup[T any]() (context.Context, *pgx.Conn, TestAdapter[T]) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -77,14 +107,63 @@ func TestGetUser(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close(context.Background())
-
-	insert(ctx, conn)
 
 	// Create a new adapter.
-	adapter := getAdapter[any, User](ctx, conn)
+	adapter := getAdapter[any, T](ctx, conn)
+
+	return ctx, conn, adapter
+}
+
+func TestGetUser(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	userId := insert(ctx, conn)
+
+	defer conn.Close(ctx)
+
 	// Get the user.
-	_, err = adapter.GetUser("1")
+	_, err := adapter.GetUser(userId)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delete(ctx, conn)
+}
+
+func TestSetUser(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	defer conn.Close(ctx)
+
+	// Set the user.
+	userId := utils.GenerateRandomString(5, "")
+	user := User{
+		ID:       userId,
+		Username: utils.GenerateRandomString(6, ""),
+	}
+	err := adapter.SetUser(user, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delete(ctx, conn)
+}
+
+func TestSetUserWithKey(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	defer conn.Close(ctx)
+
+	// Set the user.
+	userId := utils.GenerateRandomString(5, "")
+	user := User{
+		ID:       userId,
+		Username: utils.GenerateRandomString(6, ""),
+	}
+	hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
+	key := auth.KeySchema{
+		ID:             utils.GenerateRandomString(5, ""),
+		UserID:         userId,
+		HashedPassword: &hashedPassword,
+	}
+	err := adapter.SetUser(user, &key)
 	if err != nil {
 		log.Fatal(err)
 	}
