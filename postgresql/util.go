@@ -32,6 +32,9 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 		for i := 0; i < v.NumField(); i++ {
 			field := t.Field(i)
 			tag := field.Tag.Get("db")
+			if tag == "" || tag == "-" || len(tag) == 0 {
+				continue
+			}
 			fields = append(fields, EscapeName(tag))
 			placeholders = append(placeholders, placeholder(i))
 			args = append(args, v.Field(i).Interface())

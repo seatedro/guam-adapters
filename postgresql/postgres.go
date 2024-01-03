@@ -25,54 +25,68 @@ type Tables struct {
 	Key     string
 }
 
-type postgresAdapterImpl[T any] struct {
-	ctx        context.Context
-	db         *pgx.Conn
-	userHelper HelperFunc[T]
-	keyHelper  HelperFunc[auth.KeySchema]
-	tables     Tables
+type postgresAdapterImpl[U any, S any] struct {
+	ctx           context.Context
+	db            *pgx.Conn
+	userHelper    HelperFunc[U]
+	keyHelper     HelperFunc[auth.KeySchema]
+	sessionHelper HelperFunc[S]
+	tables        Tables
 }
 
-type TestAdapter[T any] interface {
-	GetUser(userId string) (*T, error)
-	SetUser(user T, key *auth.KeySchema) error
+type TestAdapter[U any, S any] interface {
+	GetUser(userId string) (*U, error)
+	SetUser(user U, key *auth.KeySchema) error
 	DeleteUser(userId string) error
-	UpdateUser(userId string, partialUser T) error
+	UpdateUser(userId string, partialUser U) error
+	GetSession(sessionId string) (*S, error)
+	GetSessionByUserId(userId string) (*S, error)
+	SetSession(session S) error
+	DeleteSession(sessionId string) error
+	DeleteSessionByUserId(userId string) error
+	UpdateSession(sessionId string, partialSession map[string]any) error
 }
 
-func PostgresAdapter[S any, T any](
+func PostgresAdapter[U any, S any](
 	ctx context.Context,
 	db *pgx.Conn,
 	tables Tables,
-) TestAdapter[T] {
+) TestAdapter[U, S] {
 	ESCAPED_USER_TABLE_NAME = EscapeName(tables.User)
 	ESCAPED_KEY_TABLE_NAME = EscapeName(tables.Key)
 	ESCAPED_SESSION_TABLE_NAME = EscapeName(tables.Session)
 	logger = zap.NewExample().Sugar()
 
-	userHelper := CreatePreparedStatementHelper[T](func(index int) string {
+	userHelper := CreatePreparedStatementHelper[U](func(index int) string {
 		return fmt.Sprintf("$%d", index+1)
 	})
 	keyHelper := CreatePreparedStatementHelper[auth.KeySchema](func(index int) string {
 		return fmt.Sprintf("$%d", index+1)
 	})
-	return &postgresAdapterImpl[T]{
-		ctx:        ctx,
-		db:         db,
-		tables:     tables,
-		userHelper: userHelper,
-		keyHelper:  keyHelper,
+	sessionHelper := CreatePreparedStatementHelper[S](func(index int) string {
+		return fmt.Sprintf("$%d", index+1)
+	})
+	return &postgresAdapterImpl[U, S]{
+		ctx:           ctx,
+		db:            db,
+		tables:        tables,
+		userHelper:    userHelper,
+		keyHelper:     keyHelper,
+		sessionHelper: sessionHelper,
 	}
 }
 
-func insertIntoTable[T any](
+func insertIntoTable[U any](
 	ctx context.Context,
 	tx pgx.Tx,
-	item T,
+	item U,
 	tableName string,
-	helper HelperFunc[T],
+	helper HelperFunc[U],
 ) error {
 	fields, placeholders, args := helper(item)
+	logger.Debugln("Fields: ", fields)
+	logger.Debugln("Placeholders: ", placeholders)
+	logger.Debugln("Args: ", args)
 	query := fmt.Sprintf(
 		"INSERT INTO %s ( %s ) VALUES ( %s )",
 		tableName,
@@ -86,10 +100,10 @@ func insertIntoTable[T any](
 	return nil
 }
 
-func (p *postgresAdapterImpl[T]) GetUser(userId string) (*T, error) {
-	var users []T
+func (p *postgresAdapterImpl[U, S]) GetUser(userId string) (*U, error) {
+	var users []U
 	query := fmt.Sprintf("SELECT * FROM %s WHERE id = $1", ESCAPED_USER_TABLE_NAME)
-	logger.Infoln("Query: ", query)
+	logger.Debugln("Query: ", query)
 	api, err := pgxscan.NewDBScanAPI(dbscan.WithAllowUnknownColumns(true))
 	if err != nil {
 		logger.Errorln("Error: ", err)
@@ -102,14 +116,14 @@ func (p *postgresAdapterImpl[T]) GetUser(userId string) (*T, error) {
 	}
 
 	scan.Select(p.ctx, p.db, &users, query, userId)
-	logger.Infof("User: %+v\n", users)
+	logger.Debugf("User: %+v\n", users)
 	if users != nil {
 		return &users[0], nil
 	}
 	return nil, nil
 }
 
-func (p *postgresAdapterImpl[T]) SetUser(user T, key *auth.KeySchema) error {
+func (p *postgresAdapterImpl[U, S]) SetUser(user U, key *auth.KeySchema) error {
 	if key == nil {
 		userFields, userPlaceholders, userArgs := p.userHelper(user)
 		query := fmt.Sprintf(
@@ -145,7 +159,7 @@ func (p *postgresAdapterImpl[T]) SetUser(user T, key *auth.KeySchema) error {
 	return tx.Commit(p.ctx)
 }
 
-func (p *postgresAdapterImpl[T]) DeleteUser(userId string) error {
+func (p *postgresAdapterImpl[U, S]) DeleteUser(userId string) error {
 	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", ESCAPED_USER_TABLE_NAME)
 
 	_, err := p.db.Exec(p.ctx, query, userId)
@@ -156,7 +170,7 @@ func (p *postgresAdapterImpl[T]) DeleteUser(userId string) error {
 	return nil
 }
 
-func (p *postgresAdapterImpl[T]) UpdateUser(userId string, partialUser T) error {
+func (p *postgresAdapterImpl[U, S]) UpdateUser(userId string, partialUser U) error {
 	userFields, userPlaceholders, userArgs := p.userHelper(partialUser)
 	query := fmt.Sprintf(
 		"UPDATE %s SET %s WHERE id = $%d",
@@ -168,6 +182,141 @@ func (p *postgresAdapterImpl[T]) UpdateUser(userId string, partialUser T) error 
 	_, err := p.db.Exec(p.ctx, query, append(userArgs, userId)...)
 	if err != nil {
 		logger.Errorln("Error while updating user: ", err)
+		return err
+	}
+	return nil
+}
+
+func (p *postgresAdapterImpl[U, S]) GetSession(sessionId string) (*S, error) {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil, nil
+	}
+	var sessions []S
+	query := fmt.Sprintf("SELECT * FROM %s WHERE id = $1", ESCAPED_SESSION_TABLE_NAME)
+	logger.Debugln("Query: ", query)
+	api, err := pgxscan.NewDBScanAPI(dbscan.WithAllowUnknownColumns(true))
+	if err != nil {
+		logger.Errorln("Error: ", err)
+		return nil, err
+	}
+	scan, err := pgxscan.NewAPI(api)
+	if err != nil {
+		logger.Errorln("Error: ", err)
+		return nil, err
+	}
+
+	scan.Select(p.ctx, p.db, &sessions, query, sessionId)
+	logger.Debugf("Sessions: %+v\n", sessions)
+	if sessions != nil {
+		return &sessions[0], nil
+	}
+	return nil, nil
+}
+
+func (p *postgresAdapterImpl[U, S]) GetSessionByUserId(userId string) (*S, error) {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil, nil
+	}
+	var sessions []S
+	query := fmt.Sprintf("SELECT * FROM %s WHERE user_id = $1", ESCAPED_SESSION_TABLE_NAME)
+	logger.Debugln("Query: ", query)
+	api, err := pgxscan.NewDBScanAPI(dbscan.WithAllowUnknownColumns(true))
+	if err != nil {
+		logger.Errorln("Error: ", err)
+		return nil, err
+	}
+	scan, err := pgxscan.NewAPI(api)
+	if err != nil {
+		logger.Errorln("Error: ", err)
+		return nil, err
+	}
+
+	scan.Select(p.ctx, p.db, &sessions, query, userId)
+	logger.Debugf("Sessions: %+v\n", sessions)
+	if sessions != nil {
+		return &sessions[0], nil
+	}
+	return nil, nil
+}
+
+func (p *postgresAdapterImpl[U, S]) SetSession(session S) error {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil
+	}
+	sessionFields, sessionPlaceholders, sessionArgs := p.sessionHelper(session)
+	query := fmt.Sprintf(
+		"INSERT INTO %s ( %s ) VALUES ( %s )",
+		ESCAPED_SESSION_TABLE_NAME,
+		strings.Join(sessionFields, ", "),
+		strings.Join(sessionPlaceholders, ", "),
+	)
+
+	_, err := p.db.Exec(p.ctx, query, sessionArgs...)
+	if err != nil {
+		logger.Errorln("Error while inserting into DB: ", err)
+		return err
+	}
+
+	return nil
+}
+
+func (p *postgresAdapterImpl[U, S]) DeleteSession(sessionId string) error {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil
+	}
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", ESCAPED_SESSION_TABLE_NAME)
+
+	_, err := p.db.Exec(p.ctx, query, sessionId)
+	if err != nil {
+		logger.Errorln("Error while deleting session: ", err)
+		return err
+	}
+
+	return nil
+}
+
+func (p *postgresAdapterImpl[U, S]) DeleteSessionByUserId(userId string) error {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil
+	}
+	query := fmt.Sprintf("DELETE FROM %s WHERE user_id = $1", ESCAPED_SESSION_TABLE_NAME)
+
+	_, err := p.db.Exec(p.ctx, query, userId)
+	if err != nil {
+		logger.Errorln("Error while deleting session: ", err)
+		return err
+	}
+
+	return nil
+}
+
+func (p *postgresAdapterImpl[U, S]) UpdateSession(
+	sessionId string,
+	partialSession map[string]any,
+) error {
+	if ESCAPED_SESSION_TABLE_NAME == "" {
+		return nil
+	}
+	var sessionFields []string
+	var sessionPlaceholders []string
+	var sessionArgs []interface{}
+	i := 0
+	for key, value := range partialSession {
+		sessionFields = append(sessionFields, EscapeName(key))
+		sessionPlaceholders = append(sessionPlaceholders, fmt.Sprintf("$%d", i+1))
+		sessionArgs = append(sessionArgs, value)
+		i++
+	}
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE id = $%d",
+		ESCAPED_SESSION_TABLE_NAME,
+		GetSetArgs(sessionFields, sessionPlaceholders),
+		len(sessionArgs)+1,
+	)
+
+	_, err := p.db.Exec(p.ctx, query, append(sessionArgs, sessionId)...)
+	if err != nil {
+		logger.Errorln("Error while updating session: ", err)
 		return err
 	}
 	return nil
