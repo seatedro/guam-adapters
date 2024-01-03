@@ -28,14 +28,16 @@ type Tables struct {
 type postgresAdapterImpl[T any] struct {
 	ctx        context.Context
 	db         *pgx.Conn
-	tables     Tables
 	userHelper HelperFunc[T]
 	keyHelper  HelperFunc[auth.KeySchema]
+	tables     Tables
 }
 
 type TestAdapter[T any] interface {
 	GetUser(userId string) (*T, error)
 	SetUser(user T, key *auth.KeySchema) error
+	DeleteUser(userId string) error
+	UpdateUser(userId string, partialUser T) error
 }
 
 func PostgresAdapter[S any, T any](
@@ -141,4 +143,32 @@ func (p *postgresAdapterImpl[T]) SetUser(user T, key *auth.KeySchema) error {
 	}
 
 	return tx.Commit(p.ctx)
+}
+
+func (p *postgresAdapterImpl[T]) DeleteUser(userId string) error {
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = $1", ESCAPED_USER_TABLE_NAME)
+
+	_, err := p.db.Exec(p.ctx, query, userId)
+	if err != nil {
+		logger.Errorln("Error while deleting user: ", err)
+		return err
+	}
+	return nil
+}
+
+func (p *postgresAdapterImpl[T]) UpdateUser(userId string, partialUser T) error {
+	userFields, userPlaceholders, userArgs := p.userHelper(partialUser)
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE id = $%d",
+		ESCAPED_USER_TABLE_NAME,
+		GetSetArgs(userFields, userPlaceholders),
+		len(userArgs)+1,
+	)
+
+	_, err := p.db.Exec(p.ctx, query, append(userArgs, userId)...)
+	if err != nil {
+		logger.Errorln("Error while updating user: ", err)
+		return err
+	}
+	return nil
 }

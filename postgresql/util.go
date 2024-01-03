@@ -40,3 +40,13 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 		return fields, placeholders, args
 	}
 }
+
+func GetSetArgs(fields []string, placeholders []string) string {
+	var setArgs []string
+	for i, field := range fields {
+		setArg := field + " = " + placeholders[i]
+		setArgs = append(setArgs, setArg)
+	}
+
+	return strings.Join(setArgs, ", ")
+}

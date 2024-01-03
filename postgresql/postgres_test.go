@@ -129,20 +129,35 @@ func TestGetUser(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func TestSetUser(t *testing.T) {
-	ctx, conn, adapter := setup[User]()
-	defer conn.Close(ctx)
-
+func createUser(adapter TestAdapter[User], withKey bool) string {
 	// Set the user.
+	var key *auth.KeySchema = nil
 	userId := utils.GenerateRandomString(5, "")
 	user := User{
 		ID:       userId,
 		Username: utils.GenerateRandomString(6, ""),
 	}
-	err := adapter.SetUser(user, nil)
+	if withKey {
+		hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
+		key = &auth.KeySchema{
+			ID:             utils.GenerateRandomString(5, ""),
+			UserID:         userId,
+			HashedPassword: &hashedPassword,
+		}
+	}
+	err := adapter.SetUser(user, key)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	return userId
+}
+
+func TestSetUser(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	defer conn.Close(ctx)
+
+	_ = createUser(adapter, false)
 
 	delete(ctx, conn)
 }
@@ -151,19 +166,43 @@ func TestSetUserWithKey(t *testing.T) {
 	ctx, conn, adapter := setup[User]()
 	defer conn.Close(ctx)
 
-	// Set the user.
-	userId := utils.GenerateRandomString(5, "")
-	user := User{
-		ID:       userId,
-		Username: utils.GenerateRandomString(6, ""),
+	_ = createUser(adapter, true)
+
+	delete(ctx, conn)
+}
+
+func TestDeleteUser(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	defer conn.Close(ctx)
+
+	userId := createUser(adapter, false)
+	// Delete the user.
+	err := adapter.DeleteUser(userId)
+	if err != nil {
+		log.Fatal(err)
 	}
-	hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
-	key := auth.KeySchema{
-		ID:             utils.GenerateRandomString(5, ""),
-		UserID:         userId,
-		HashedPassword: &hashedPassword,
+
+	// Try to get the user.
+	user, err := adapter.GetUser(userId)
+	if err != nil || user != nil {
+		log.Fatal(err)
 	}
-	err := adapter.SetUser(user, &key)
+
+	delete(ctx, conn)
+}
+
+func TestUpdateUser(t *testing.T) {
+	ctx, conn, adapter := setup[User]()
+	defer conn.Close(ctx)
+
+	userId := createUser(adapter, false)
+
+	// Update the user.
+	partialUser := User{
+		Username: utils.GenerateRandomString(5, ""),
+	}
+
+	err := adapter.UpdateUser(userId, partialUser)
 	if err != nil {
 		log.Fatal(err)
 	}
