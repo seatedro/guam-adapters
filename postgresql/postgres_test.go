@@ -21,7 +21,7 @@ type User struct {
 	Username string `db:"username"`
 }
 
-func insert(ctx context.Context, conn *pgx.Conn) (string, string) {
+func insert(ctx context.Context, conn *pgx.Conn) (string, string, string) {
 	// Create a new user.
 	userId := utils.GenerateRandomString(5, "")
 	username := utils.GenerateRandomString(6, "")
@@ -65,15 +65,15 @@ func insert(ctx context.Context, conn *pgx.Conn) (string, string) {
 		log.Fatal(err)
 	}
 
-	return userId, sessionId
+	return userId, sessionId, keyId
 }
 
-func getAdapter[T any, S any](ctx context.Context, conn *pgx.Conn) TestAdapter[T, S] {
-	return PostgresAdapter[T, S](ctx, conn, Tables{
+func getAdapter(ctx context.Context, conn *pgx.Conn) TestAdapter {
+	return PostgresAdapter(ctx, conn, Tables{
 		User:    "auth_user",
 		Session: "user_session",
 		Key:     "user_key",
-	})
+	}, false)
 }
 
 func delete(ctx context.Context, conn *pgx.Conn) {
@@ -95,7 +95,7 @@ func delete(ctx context.Context, conn *pgx.Conn) {
 	}
 }
 
-func setup[T any, S any]() (context.Context, *pgx.Conn, TestAdapter[T, S]) {
+func setup() (context.Context, *pgx.Conn, TestAdapter) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -109,14 +109,14 @@ func setup[T any, S any]() (context.Context, *pgx.Conn, TestAdapter[T, S]) {
 	}
 
 	// Create a new adapter.
-	adapter := getAdapter[T, S](ctx, conn)
+	adapter := getAdapter(ctx, conn)
 
 	return ctx, conn, adapter
 }
 
 func TestGetUser(t *testing.T) {
-	ctx, conn, adapter := setup[User, any]()
-	userId, _ := insert(ctx, conn)
+	ctx, conn, adapter := setup()
+	userId, _, _ := insert(ctx, conn)
 
 	defer conn.Close(ctx)
 
@@ -129,13 +129,16 @@ func TestGetUser(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func createUser(adapter TestAdapter[User, auth.SessionSchema], withKey bool) string {
+func createUser(adapter TestAdapter, withKey bool) string {
 	// Set the user.
 	var key *auth.KeySchema = nil
 	userId := utils.GenerateRandomString(5, "")
-	user := User{
-		ID:       userId,
-		Username: utils.GenerateRandomString(6, ""),
+	user := auth.UserSchema{
+		ID: userId,
+		// Username: utils.GenerateRandomString(6, ""),
+		Attributes: map[string]interface{}{
+			"username": utils.GenerateRandomString(6, ""),
+		},
 	}
 	if withKey {
 		hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
@@ -154,7 +157,7 @@ func createUser(adapter TestAdapter[User, auth.SessionSchema], withKey bool) str
 }
 
 func TestSetUser(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 	defer conn.Close(ctx)
 
 	_ = createUser(adapter, false)
@@ -163,7 +166,7 @@ func TestSetUser(t *testing.T) {
 }
 
 func TestSetUserWithKey(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 	defer conn.Close(ctx)
 
 	_ = createUser(adapter, true)
@@ -172,7 +175,7 @@ func TestSetUserWithKey(t *testing.T) {
 }
 
 func TestDeleteUser(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 	defer conn.Close(ctx)
 
 	userId := createUser(adapter, false)
@@ -192,15 +195,15 @@ func TestDeleteUser(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 	defer conn.Close(ctx)
 
 	userId := createUser(adapter, false)
 
 	// Update the user.
-	partialUser := User{
-		ID:       userId,
-		Username: utils.GenerateRandomString(5, ""),
+	// Username: utils.GenerateRandomString(5, ""),
+	partialUser := map[string]interface{}{
+		"username": utils.GenerateRandomString(5, ""),
 	}
 
 	err := adapter.UpdateUser(userId, partialUser)
@@ -212,11 +215,11 @@ func TestUpdateUser(t *testing.T) {
 }
 
 func TestGetSession(t *testing.T) {
-	ctx, conn, adapter := setup[any, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 
 	defer conn.Close(ctx)
 
-	_, sessionId := insert(ctx, conn)
+	_, sessionId, _ := insert(ctx, conn)
 
 	// Get the session.
 	_, err := adapter.GetSession(sessionId)
@@ -227,15 +230,15 @@ func TestGetSession(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func TestGetSessionByUserId(t *testing.T) {
-	ctx, conn, adapter := setup[auth.UserSchema, auth.SessionSchema]()
+func TestGetSessionsByUserId(t *testing.T) {
+	ctx, conn, adapter := setup()
 
 	defer conn.Close(ctx)
 
-	userId, _ := insert(ctx, conn)
+	userId, _, _ := insert(ctx, conn)
 
 	// Get the session.
-	_, err := adapter.GetSessionByUserId(userId)
+	_, err := adapter.GetSessionsByUserId(userId)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -243,7 +246,7 @@ func TestGetSessionByUserId(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func createSession(adapter TestAdapter[User, auth.SessionSchema]) string {
+func createSession(adapter TestAdapter) string {
 	userId := createUser(adapter, true)
 
 	// Set the session.
@@ -264,7 +267,7 @@ func createSession(adapter TestAdapter[User, auth.SessionSchema]) string {
 }
 
 func TestSetSession(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 
 	defer conn.Close(ctx)
 
@@ -274,11 +277,11 @@ func TestSetSession(t *testing.T) {
 }
 
 func TestDeleteSession(t *testing.T) {
-	ctx, conn, adapter := setup[any, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 
 	defer conn.Close(ctx)
 
-	_, sessionId := insert(ctx, conn)
+	_, sessionId, _ := insert(ctx, conn)
 
 	// Delete the session.
 	err := adapter.DeleteSession(sessionId)
@@ -295,20 +298,20 @@ func TestDeleteSession(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func TestDeleteSessionByUserId(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+func TestDeleteSessionsByUserId(t *testing.T) {
+	ctx, conn, adapter := setup()
 
 	defer conn.Close(ctx)
 
-	userId, _ := insert(ctx, conn)
+	userId, _, _ := insert(ctx, conn)
 
 	// Delete the session.
-	err := adapter.DeleteSessionByUserId(userId)
+	err := adapter.DeleteSessionsByUserId(userId)
 	if err != nil {
 		log.Fatal(err)
 	}
 	// Try to get the session.
-	session, err := adapter.GetSessionByUserId(userId)
+	session, err := adapter.GetSessionsByUserId(userId)
 	if err != nil || session != nil {
 		log.Fatal(err)
 	}
@@ -316,7 +319,7 @@ func TestDeleteSessionByUserId(t *testing.T) {
 }
 
 func TestUpdateSession(t *testing.T) {
-	ctx, conn, adapter := setup[User, auth.SessionSchema]()
+	ctx, conn, adapter := setup()
 	defer conn.Close(ctx)
 
 	sessionId := createSession(adapter)
@@ -330,5 +333,141 @@ func TestUpdateSession(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	delete(ctx, conn)
+}
+
+func TestGetKey(t *testing.T) {
+	ctx, conn, adapter := setup()
+
+	defer conn.Close(ctx)
+
+	_, _, keyId := insert(ctx, conn)
+
+	// Get the key.
+	_, err := adapter.GetKey(keyId)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delete(ctx, conn)
+}
+
+func TestGetKeysByUserId(t *testing.T) {
+	ctx, conn, adapter := setup()
+
+	defer conn.Close(ctx)
+
+	userId, _, _ := insert(ctx, conn)
+
+	// Get the session.
+	_, err := adapter.GetKeysByUserId(userId)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	delete(ctx, conn)
+}
+
+func createKey(adapter TestAdapter) string {
+	userId := createUser(adapter, true)
+
+	// Set the key.
+	keyId := utils.GenerateRandomString(5, "")
+	hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(6, ""))
+	key := auth.KeySchema{
+		ID:             keyId,
+		UserID:         userId,
+		HashedPassword: &hashedPassword,
+	}
+
+	err := adapter.SetKey(key)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return keyId
+}
+
+func TestSetKey(t *testing.T) {
+	ctx, conn, adapter := setup()
+
+	defer conn.Close(ctx)
+
+	_ = createKey(adapter)
+
+	delete(ctx, conn)
+}
+
+func TestDeleteKey(t *testing.T) {
+	ctx, conn, adapter := setup()
+
+	defer conn.Close(ctx)
+
+	_, _, keyId := insert(ctx, conn)
+
+	// Delete the key.
+	err := adapter.DeleteKey(keyId)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Try to get the key.
+	key, err := adapter.GetKey(keyId)
+	if err != nil || key != nil {
+		log.Fatal(err)
+	}
+
+	delete(ctx, conn)
+}
+
+func TestDeleteKeysByUserId(t *testing.T) {
+	ctx, conn, adapter := setup()
+
+	defer conn.Close(ctx)
+
+	userId, _, _ := insert(ctx, conn)
+
+	// Delete the session.
+	err := adapter.DeleteKeysByUserId(userId)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Try to get the key.
+	key, err := adapter.GetKeysByUserId(userId)
+	if err != nil || key != nil {
+		log.Fatal(err)
+	}
+	delete(ctx, conn)
+}
+
+func TestUpdateKey(t *testing.T) {
+	ctx, conn, adapter := setup()
+	defer conn.Close(ctx)
+
+	keyId := createKey(adapter)
+
+	// Update the key.
+	hashedPassword := utils.GenerateScryptHash(utils.GenerateRandomString(10, ""))
+	partialKey := map[string]interface{}{
+		"hashed_password": &hashedPassword,
+	}
+	err := adapter.UpdateKey(keyId, partialKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	delete(ctx, conn)
+}
+
+func TestGetSessionAndUser(t *testing.T) {
+	ctx, conn, adapter := setup()
+	defer conn.Close(ctx)
+
+	sessionId := createSession(adapter)
+
+	session, user, err := adapter.GetSessionAndUser(sessionId)
+	if err != nil || sessionId != session.ID || session.UserID != user.ID {
+		log.Fatal(err)
+	}
+
 	delete(ctx, conn)
 }

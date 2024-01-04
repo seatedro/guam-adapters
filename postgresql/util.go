@@ -31,6 +31,9 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 
 		for i := 0; i < v.NumField(); i++ {
 			field := t.Field(i)
+			if field.Name == "Attributes" {
+				continue
+			}
 			tag := field.Tag.Get("db")
 			if tag == "" || tag == "-" || len(tag) == 0 {
 				continue
@@ -38,6 +41,13 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 			fields = append(fields, EscapeName(tag))
 			placeholders = append(placeholders, placeholder(i))
 			args = append(args, v.Field(i).Interface())
+		}
+
+		// If struct has Attributes field, append it to args
+		if _, ok := t.FieldByName("Attributes"); ok {
+			attrs := v.FieldByName("Attributes")
+			for i := 0; i < attrs.Len(); i++ {
+			}
 		}
 
 		return fields, placeholders, args
