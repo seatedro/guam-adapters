@@ -34,36 +34,12 @@ type postgresAdapterImpl struct {
 	tables        Tables
 }
 
-type UserJoinSessionSchema struct {
-	auth.UserSchema
-	SessionId string `db:"__session_id"`
-}
-type TestAdapter interface {
-	GetUser(userId string) (*auth.UserSchema, error)
-	SetUser(user auth.UserSchema, key *auth.KeySchema) error
-	DeleteUser(userId string) error
-	UpdateUser(userId string, partialUser map[string]any) error
-	GetSession(sessionId string) (*auth.SessionSchema, error)
-	GetSessionsByUserId(userId string) (*auth.SessionSchema, error)
-	SetSession(session auth.SessionSchema) error
-	DeleteSession(sessionId string) error
-	DeleteSessionsByUserId(userId string) error
-	UpdateSession(sessionId string, partialSession map[string]any) error
-	GetKey(keyId string) (*auth.KeySchema, error)
-	GetKeysByUserId(userId string) ([]auth.KeySchema, error)
-	SetKey(key auth.KeySchema) error
-	DeleteKey(keyId string) error
-	DeleteKeysByUserId(userId string) error
-	UpdateKey(keyId string, partialKey map[string]any) error
-	GetSessionAndUser(sessionId string) (*auth.SessionSchema, *UserJoinSessionSchema, error)
-}
-
 func PostgresAdapter(
 	ctx context.Context,
 	db *pgx.Conn,
 	tables Tables,
 	debugMode bool,
-) TestAdapter {
+) auth.AdapterWithGetter {
 	ESCAPED_USER_TABLE_NAME = EscapeName(tables.User)
 	ESCAPED_KEY_TABLE_NAME = EscapeName(tables.Key)
 	ESCAPED_SESSION_TABLE_NAME = EscapeName(tables.Session)
@@ -100,14 +76,14 @@ func PostgresAdapter(
 	}
 }
 
-func insertIntoTable[T any](
+func insertIntoTable(
 	ctx context.Context,
 	tx pgx.Tx,
-	item T,
 	tableName string,
-	helper HelperFunc[T],
+	fields []string,
+	placeholders []string,
+	args []any,
 ) error {
-	fields, placeholders, args := helper(item)
 	query := fmt.Sprintf(
 		"INSERT INTO %s ( %s ) VALUES ( %s )",
 		tableName,
@@ -151,8 +127,14 @@ func (p *postgresAdapterImpl) SetUser(user auth.UserSchema, key *auth.KeySchema)
 		userFields, userPlaceholders, userArgs := p.userHelper(user)
 
 		// If struct has Attributes field, append it to args
-		if user.Attributes != nil {
+		i := len(userArgs)
+		for key, val := range user.Attributes {
+			userFields = append(userFields, EscapeName(key))
+			userPlaceholders = append(userPlaceholders, fmt.Sprintf("$%d", i+1))
+			userArgs = append(userArgs, val)
+			i++
 		}
+
 		query := fmt.Sprintf(
 			"INSERT INTO %s ( %s ) VALUES ( %s )",
 			ESCAPED_USER_TABLE_NAME,
@@ -175,11 +157,24 @@ func (p *postgresAdapterImpl) SetUser(user auth.UserSchema, key *auth.KeySchema)
 
 	defer tx.Rollback(p.ctx)
 
-	if err := insertIntoTable(p.ctx, tx, user, ESCAPED_USER_TABLE_NAME, p.userHelper); err != nil {
+	userFields, userPlaceholders, userArgs := p.userHelper(user)
+
+	// If struct has Attributes field, append it to args
+	i := len(userArgs)
+	for key, val := range user.Attributes {
+		userFields = append(userFields, EscapeName(key))
+		userPlaceholders = append(userPlaceholders, fmt.Sprintf("$%d", i+1))
+		userArgs = append(userArgs, val)
+		i++
+	}
+
+	if err := insertIntoTable(p.ctx, tx, ESCAPED_USER_TABLE_NAME, userFields, userPlaceholders, userArgs); err != nil {
 		return err
 	}
 
-	if err := insertIntoTable(p.ctx, tx, *key, ESCAPED_KEY_TABLE_NAME, p.keyHelper); err != nil {
+	keyFields, keyPlaceholders, keyArgs := p.keyHelper(*key)
+
+	if err := insertIntoTable(p.ctx, tx, ESCAPED_KEY_TABLE_NAME, keyFields, keyPlaceholders, keyArgs); err != nil {
 		return err
 	}
 
@@ -256,7 +251,7 @@ func (p *postgresAdapterImpl) GetSession(
 
 func (p *postgresAdapterImpl) GetSessionsByUserId(
 	userId string,
-) (*auth.SessionSchema, error) {
+) ([]auth.SessionSchema, error) {
 	if ESCAPED_SESSION_TABLE_NAME == "" {
 		return nil, nil
 	}
@@ -277,7 +272,7 @@ func (p *postgresAdapterImpl) GetSessionsByUserId(
 	scan.Select(p.ctx, p.db, &sessions, query, userId)
 	logger.Debugf("Sessions: %+v\n", sessions)
 	if sessions != nil {
-		return &sessions[0], nil
+		return sessions, nil
 	}
 	return nil, nil
 }
@@ -289,6 +284,16 @@ func (p *postgresAdapterImpl) SetSession(
 		return nil
 	}
 	sessionFields, sessionPlaceholders, sessionArgs := p.sessionHelper(session)
+
+	// If struct has Attributes field, append it to args
+	i := len(sessionArgs)
+	for key, val := range session.Attributes {
+		sessionFields = append(sessionFields, EscapeName(key))
+		sessionPlaceholders = append(sessionPlaceholders, fmt.Sprintf("$%d", i+1))
+		sessionArgs = append(sessionArgs, val)
+		i++
+	}
+
 	query := fmt.Sprintf(
 		"INSERT INTO %s ( %s ) VALUES ( %s )",
 		ESCAPED_SESSION_TABLE_NAME,
@@ -471,7 +476,7 @@ func (p *postgresAdapterImpl) DeleteKeysByUserId(userId string) error {
 
 func (p *postgresAdapterImpl) GetSessionAndUser(
 	sessionId string,
-) (*auth.SessionSchema, *UserJoinSessionSchema, error) {
+) (*auth.SessionSchema, *auth.UserJoinSessionSchema, error) {
 	if ESCAPED_SESSION_TABLE_NAME == "" {
 		return nil, nil, nil
 	}
@@ -482,8 +487,7 @@ func (p *postgresAdapterImpl) GetSessionAndUser(
 		return nil, nil, err
 	}
 
-	// var result []map[string]any
-	var result []UserJoinSessionSchema
+	var result []auth.UserJoinSessionSchema
 	query := fmt.Sprintf(
 		"SELECT %s.*, %s.id AS __session_id FROM %s INNER JOIN %s ON %s.id = %s.user_id WHERE %s.id = $1",
 		ESCAPED_USER_TABLE_NAME,

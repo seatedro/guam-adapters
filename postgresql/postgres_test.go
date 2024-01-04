@@ -68,7 +68,7 @@ func insert(ctx context.Context, conn *pgx.Conn) (string, string, string) {
 	return userId, sessionId, keyId
 }
 
-func getAdapter(ctx context.Context, conn *pgx.Conn) TestAdapter {
+func getAdapter(ctx context.Context, conn *pgx.Conn) auth.AdapterWithGetter {
 	return PostgresAdapter(ctx, conn, Tables{
 		User:    "auth_user",
 		Session: "user_session",
@@ -95,7 +95,7 @@ func delete(ctx context.Context, conn *pgx.Conn) {
 	}
 }
 
-func setup() (context.Context, *pgx.Conn, TestAdapter) {
+func setup() (context.Context, *pgx.Conn, auth.AdapterWithGetter) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -129,7 +129,7 @@ func TestGetUser(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func createUser(adapter TestAdapter, withKey bool) string {
+func createUser(adapter auth.AdapterWithGetter, withKey bool) string {
 	// Set the user.
 	var key *auth.KeySchema = nil
 	userId := utils.GenerateRandomString(5, "")
@@ -246,7 +246,7 @@ func TestGetSessionsByUserId(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func createSession(adapter TestAdapter) string {
+func createSession(adapter auth.AdapterWithGetter) string {
 	userId := createUser(adapter, true)
 
 	// Set the session.
@@ -368,7 +368,7 @@ func TestGetKeysByUserId(t *testing.T) {
 	delete(ctx, conn)
 }
 
-func createKey(adapter TestAdapter) string {
+func createKey(adapter auth.AdapterWithGetter) string {
 	userId := createUser(adapter, true)
 
 	// Set the key.

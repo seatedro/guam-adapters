@@ -43,13 +43,6 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 			args = append(args, v.Field(i).Interface())
 		}
 
-		// If struct has Attributes field, append it to args
-		if _, ok := t.FieldByName("Attributes"); ok {
-			attrs := v.FieldByName("Attributes")
-			for i := 0; i < attrs.Len(); i++ {
-			}
-		}
-
 		return fields, placeholders, args
 	}
 }
