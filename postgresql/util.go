@@ -29,6 +29,7 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 		var placeholders []string
 		var args []interface{}
 
+		n := 0
 		for i := 0; i < v.NumField(); i++ {
 			field := t.Field(i)
 			if field.Name == "Attributes" {
@@ -39,8 +40,9 @@ func CreatePreparedStatementHelper[T any](placeholder PlaceHolderFunc) HelperFun
 				continue
 			}
 			fields = append(fields, EscapeName(tag))
-			placeholders = append(placeholders, placeholder(i))
+			placeholders = append(placeholders, placeholder(n))
 			args = append(args, v.Field(i).Interface())
+			n++
 		}
 
 		return fields, placeholders, args
