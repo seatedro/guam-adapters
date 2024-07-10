@@ -1,4 +1,4 @@
-module github.com/rohitp934/guam-adapters/postgresql
+module github.com/seatedro/guam-adapters/postgresql
 
 go 1.21.0
 
@@ -6,7 +6,7 @@ require (
 	github.com/georgysavva/scany/v2 v2.0.0
 	github.com/jackc/pgx/v5 v5.5.1
 	github.com/joho/godotenv v1.5.1
-	github.com/rohitp934/guam v0.0.3
+	github.com/seatedro/guam v0.0.3
 	go.uber.org/zap v1.26.0
 )
 
@@ -20,4 +20,4 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 )
 
-replace github.com/rohitp934/guam => ../../guam
+replace github.com/seatedro/guam => ../../guam

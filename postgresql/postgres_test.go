@@ -12,8 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
-	"github.com/rohitp934/guam/auth"
-	"github.com/rohitp934/guam/utils"
+	"github.com/seatedro/guam/auth"
+	"github.com/seatedro/guam/utils"
 )
 
 type User struct {

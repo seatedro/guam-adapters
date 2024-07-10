@@ -8,7 +8,7 @@ import (
 	"github.com/georgysavva/scany/v2/dbscan"
 	"github.com/georgysavva/scany/v2/pgxscan"
 	"github.com/jackc/pgx/v5"
-	"github.com/rohitp934/guam/auth"
+	"github.com/seatedro/guam/auth"
 	"go.uber.org/zap"
 )
 
